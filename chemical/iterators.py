@@ -439,35 +439,16 @@ def fold(self, seed, closure):
     Folding is useful whenever you have a collection of something, and want to
     produce a single value from it.
 
-    In order to achieve this in Python, a special type had to be created in
-    order to retain a reference to a value over the lifetime of the loop.
-
-    The `Ref` type is used to allow you to assign within a lambda function.
-
-    To get the value contained with a reference (dereference), simply access the
-    `_` attribute. To assign to the same value within an expression, you can
-    simply call the reference. A common pattern with the `Ref` type is to
-    assign and dereference in the same expression like this:
-    `my_ref(my_ref._ + 1)`
+    See also: the builtin `operator` is often a useful shorthand here.
 
     **Examples**
 
         :::python
 
-        assert it((1, 2, 3)).fold(1, lambda a, i: a(a._ * i)) == 6
-
-        # These are equivalent:
-        my_ref = Ref(2)
-
-        print(my_ref.val)
-        print(my_ref.get())
-        print(my_ref._)
-
-        my_ref.val = 123
-        my_ref.set(123)
-        my_ref(123)  # Assignment within an expression
+        assert it((1, 2, 3)).fold(1, lambda a, b: a*b) == 6
     """
-    return self.scan(seed, closure).last()
+    for i in self: seed = closure(seed, i)
+    return seed
 
 
 @trait
@@ -477,9 +458,9 @@ def scan(self, seed, closure):
     new iterator.
 
     `scan()` takes two arguments: an initial value which seeds the internal
-    state, and a closure with two arguments, the first being a mutable reference
-    to the internal state and the second an iterator element. The closure can
-    assign to the internal state to share state between iterations.
+    state, and a closure with two arguments, used to combine the elements of
+    `self` one at a time. The closure plays the role of the `sum` operation 
+    in `np.cumsum`.
 
     On iteration, the closure will be applied to each element of the iterator
     and the return value from the closure.
@@ -489,15 +470,16 @@ def scan(self, seed, closure):
         :::python
 
         assert (it((1, 2, 3))
-            .scan(1, lambda acc, ele: acc(acc._ * ele))
+            .scan(1, lambda a, b: a*b)
             .collect()
         ) == [1, 2, 6]
     """
+    
     the_seed = Ref(seed)
 
     return it(
-        (closure(the_seed, i) for i in self),
-        (closure(the_seed, i) for i in self.reverse),
+        (the_seed(closure(the_seed._, i)) for i in self),
+        (the_seed(closure(the_seed._, i)) for i in self.reverse),
         self.size_hint()
     )
 
