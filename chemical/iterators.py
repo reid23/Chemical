@@ -1,6 +1,7 @@
 import math
 from . import it, trait, ChemicalException, NothingToPeek, Ref
-
+import itertools
+from collections.abc import Iterable
 
 @trait
 class Skip(it):
@@ -99,8 +100,8 @@ def filter(self, filter_func):
         assert it('abcd').filter(lambda x: x in 'bd').collect(str) == 'bd'
     """
     return it(
-        (i for i in self if filter_func(i)),
-        (i for i in self.reverse if filter_func(i)),
+        filter(self, filter_func),
+        filter(self.reverse, filter_func),
         (0, self._upper_bound)
     )
 
@@ -117,7 +118,7 @@ def take(self, num_items):
         assert it(range(5)).take(2).collect() == [0, 1]
         assert it(range(5)).rev().take(3).collect() == [4, 3, 2]
     """
-    taken = [next(self) for i in range(num_items)]
+    taken = itertools.islice(self, num_items)
     return it(iter(taken), reversed(taken), [num_items] * 2)
 
 
@@ -132,9 +133,10 @@ def take_while(self, closure):
 
         assert it('ab7f').take_while(lambda x: x.isalpha()).collect(str) == 'ab'
     """
+    
     return it(
-        (i for i in self if closure(i)),
-        it(i for i in self.reverse if closure(i)),
+        itertools.takewhile(closure, self),
+        itertools.takewhile(closure, self.reverse),
         (0, self.size_hint()[1])
     )
 
@@ -215,11 +217,10 @@ def chain_it(self, itr):
         assert it('ab').chain('cd').collect(str) == 'abcd'
         assert it('ab').chain('cd').rev().collect(str) == 'dcba'
     """
-    from itertools import chain
     chained = it(itr)
     return it(
-        chain(self, chained),
-        chain(
+        itertools.chain(self, chained),
+        itertools.chain(
             chained.rev() if isinstance(chained, it) else reversed(chained),
             self.rev()
         ),
@@ -244,8 +245,7 @@ def cycle_it(self):
 
         assert it('123').cycle().take(6).collect(str) == '123123'
     """
-    from itertools import cycle
-    return it(cycle(self), it(cycle(self.reverse)))
+    return it(itertools.cycle(self), it(itertools.cycle(self.reverse)))
 
 
 @trait('map')
@@ -265,6 +265,10 @@ def map_it(self, closure):
         self.size_hint()
     )
 
+@trait
+def starmap(self, closure):
+    def f(args): closure(*args)
+    return self.map(f)
 
 @trait('enumerate')
 def enumerate_it(self):
@@ -398,6 +402,32 @@ def flatten(self):
             links = links.chain([i])
     return links
 
+@trait
+def deepflatten(self, preserve_strings=True, max_depth=math.inf):
+    """
+    fully flattens and chains each element in the iterator, or to `max_depth` levels.
+
+    Args:
+        preserve_strings (bool, optional): whether to keep strings intact instead of treating them as iterables. Defaults to True.
+        max_depth (int, optional): what depth to stop at. Defaults to math.inf, for a full flatten.
+
+    **Examples**
+
+        :::python
+
+        assert it([[[[[1]],[2]],[3]],[4]]).deepflatten().collect()==[1,2,3,4]
+    """
+    def deepflatten_generic(xs, depth=0):
+        for x in xs:
+            if isinstance(x, Iterable) and (preserve_strings or not isinstance(x, (str, bytes))) and (depth<max_depth):
+                yield from deepflatten_generic(x, depth=depth+1)
+            else:
+                yield x
+    return it(
+        deepflatten_generic(self),
+        deepflatten_generic(self.reverse),
+        (self.size_hint()[0], None)
+    )
 
 @trait
 def for_each(self, closure):
@@ -476,10 +506,10 @@ def scan(self, seed, closure):
     """
     
     the_seed = Ref(seed)
-
+    closure = lambda a, b: a(closure(a._, b))
     return it(
-        (the_seed(closure(the_seed._, i)) for i in self),
-        (the_seed(closure(the_seed._, i)) for i in self.reverse),
+        (closure(the_seed, i) for i in self),
+        (closure(the_seed, i) for i in self.reverse),
         self.size_hint()
     )
 
