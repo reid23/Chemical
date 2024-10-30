@@ -121,6 +121,27 @@ def take(self, num_items):
     taken = itertools.islice(self, num_items)
     return it(iter(taken), reversed(taken), [num_items] * 2)
 
+@trait
+def islice(self, *args):
+    """
+    slice using the standard start/stop/step interface. 
+    Does not support negative step sizes or indices, but
+    passing `None` is supported.
+
+    **Examples**
+
+        :::python
+
+        assert it(range(10)).islice(2).collect() == [0, 1]
+        assert it(range(10)).islice(2, 5).collect() == [2, 3, 4]
+        assert it(range(10)).islice(4, None, 2).collect() == [4, 6, 8]
+    """
+
+    return it(
+        itertools.islice(self, *args),
+        itertools.islice(self.reverse, *args),
+        (0, self.size_hint()[1])
+    )
 
 @trait
 def take_while(self, closure):
