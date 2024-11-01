@@ -87,8 +87,8 @@ class Step(it):
         return it(Step(self.reverse, self.step), self.items, self.size_hint())
 
 
-@trait
-def filter(self, filter_func):
+@trait('filter')
+def filter_it(self, filter_func):
     """
     Filters out elements of the iterator based on the provided lambda.
 
@@ -100,8 +100,8 @@ def filter(self, filter_func):
         assert it('abcd').filter(lambda x: x in 'bd').collect(str) == 'bd'
     """
     return it(
-        filter(self, filter_func),
-        filter(self.reverse, filter_func),
+        filter(filter_func, self),
+        None if self.reverse is None else filter(filter_func, self.reverse),
         (0, self._upper_bound)
     )
 
@@ -118,8 +118,10 @@ def take(self, num_items):
         assert it(range(5)).take(2).collect() == [0, 1]
         assert it(range(5)).rev().take(3).collect() == [4, 3, 2]
     """
-    taken = itertools.islice(self, num_items)
-    return it(iter(taken), reversed(taken), [num_items] * 2)
+    return it(
+        itertools.islice(self, num_items), 
+        None if self.reverse is None else itertools.islice(self.reversed, num_items), 
+    [num_items] * 2)
 
 @trait
 def islice(self, *args):
@@ -139,7 +141,7 @@ def islice(self, *args):
 
     return it(
         itertools.islice(self, *args),
-        itertools.islice(self.reverse, *args),
+        None if self.reverse is None else itertools.islice(self.reverse, *args),
         (0, self.size_hint()[1])
     )
 
@@ -157,7 +159,7 @@ def take_while(self, closure):
     
     return it(
         itertools.takewhile(closure, self),
-        itertools.takewhile(closure, self.reverse),
+        None if self.reverse is None else itertools.takewhile(closure, self.reverse),
         (0, self.size_hint()[1])
     )
 
@@ -241,7 +243,7 @@ def chain_it(self, itr):
     chained = it(itr)
     return it(
         itertools.chain(self, chained),
-        itertools.chain(
+        None if ((chained.reverse is None) or (self.reverse is None)) else itertools.chain(
             chained.rev() if isinstance(chained, it) else reversed(chained),
             self.rev()
         ),
@@ -266,7 +268,10 @@ def cycle_it(self):
 
         assert it('123').cycle().take(6).collect(str) == '123123'
     """
-    return it(itertools.cycle(self), it(itertools.cycle(self.reverse)))
+    return it(
+        itertools.cycle(self), 
+        None if self.reverse is None else itertools.cycle(self.reverse)
+    )
 
 
 @trait('map')
@@ -282,14 +287,22 @@ def map_it(self, closure):
     """
     return it(
         map(closure, self),
-        map(closure, self.reverse),
+        None if self.reverse is None else map(closure, self.reverse),
         self.size_hint()
     )
 
 @trait
 def starmap(self, closure):
-    def f(args): closure(*args)
-    return self.map(f)
+    """
+    Applies a given function to each element, unpacking each element into arguments
+
+    **Examples**
+    
+        :::python
+
+        assert it([[1,2],[3,4],[5,6]]).starmap(operator.mul).collect() == [2, 12, 30]
+    """
+    return self.map(lambda args: closure(*args))
 
 @trait('enumerate')
 def enumerate_it(self):
@@ -302,7 +315,7 @@ def enumerate_it(self):
 
         assert it((1, 2, 3)).enumerate().collect() == [(0, 1), (1, 2), (2, 3)]
     """
-    return it(enumerate(self), enumerate(self.reverse), self.size_hint())
+    return it(enumerate(self), None if self.reverse is None else enumerate(self.reverse), self.size_hint())
 
 
 @trait
@@ -359,7 +372,7 @@ def zip_it(self, other):
     other_it = it(other)
     return it(
         zip(self, other_it),
-        zip(self.reverse, reversed(other_it)),
+        None if self.reverse is None else zip(self.reverse, reversed(other_it)),
         (
             self._lower_bound + other_it._lower_bound,
             self._upper_bound + other_it._upper_bound
@@ -381,63 +394,29 @@ def skip_while(self, closure):
             .collect(str)
         ) == 'DF'
     """
-    ahead = self.peekable()
-
-    try:
-        while closure(ahead.peek()):
-            ahead.next()
-    except NothingToPeek:
-        "Don't crash on account of this"
-
-    behind = self.reverse.peekable()
-
-    try:
-        while closure(behind.peek()):
-            behind.next()
-    except NothingToPeek:
-        "Don't crash on account of this"
-
-    return it(ahead, behind, (0, self._upper_bound))
+    return it(
+        itertools.dropwhile(closure, self), 
+        None if self.reverse is None else itertools.dropwhile(closure, self.reverse), 
+        (0, self._upper_bound)
+    )
 
 
 @trait
-def flatten(self):
+def flatten(self, preserve_strings=True, max_depth=1):
     """
-    Removes one level of grouping from each element in an iterator.
-
-    Can be used to flatten a list of lists. However, it will not flatten a list
-    containing lists of lists.
-
-    **Examples**
-
-        :::python
-
-        assert it([[1], [2], [3]]).flatten().collect() == [1, 2, 3]
-    """
-    links = it()
-    for i in self:
-        try:
-            iter(i)
-            links = links.chain(i)
-        except TypeError:
-            links = links.chain([i])
-    return links
-
-@trait
-def deepflatten(self, preserve_strings=True, max_depth=math.inf):
-    """
-    fully flattens and chains each element in the iterator, or to `max_depth` levels.
+    flattens and chains each element in the iterator, to `max_depth` levels.
 
     Args:
         preserve_strings (bool, optional): whether to keep strings intact instead of treating them as iterables. Defaults to True.
-        max_depth (int, optional): what depth to stop at. Defaults to math.inf, for a full flatten.
+        max_depth (int, optional): what depth to stop at. Defaults to 1; pass None or inf for a full flatten.
 
     **Examples**
 
         :::python
 
-        assert it([[[[[1]],[2]],[3]],[4]]).deepflatten().collect()==[1,2,3,4]
+        assert it([[[[[1]],[2]],[3]],[4]]).flatten(max_depth=None).collect()==[1,2,3,4]
     """
+    if max_depth is None: max_depth = math.inf
     def deepflatten_generic(xs, depth=0):
         for x in xs:
             if isinstance(x, Iterable) and (preserve_strings or not isinstance(x, (str, bytes))) and (depth<max_depth):
@@ -453,9 +432,8 @@ def deepflatten(self, preserve_strings=True, max_depth=math.inf):
 @trait
 def for_each(self, closure):
     """
-    Iterator version of a `for` loop.
-
-    Executes a function on each element without modifying the element.
+    Iterator version of a `for` loop. Exactly the same as `map`.
+    Executes `closure` on each element of `self`.
 
     **Examples**
 
@@ -525,14 +503,13 @@ def scan(self, seed, closure):
             .collect()
         ) == [1, 2, 6]
     """
-    
-    the_seed = Ref(seed)
-    closure = lambda a, b: a(closure(a._, b))
+
     return it(
-        (closure(the_seed, i) for i in self),
-        (closure(the_seed, i) for i in self.reverse),
+        itertools.accumulate(self, closure, initial=seed),
+        None if self.reverse is None else itertools.accumulate(self.reverse, closure, initial=seed),
         self.size_hint()
     )
+
 
 
 @trait
@@ -615,10 +592,8 @@ def par_iter(self):
 
     # Prevent from continuing right off the bat by returning None initially.
     # E.g. subsequent calls to next() will yield actual values.
-    forward = _process_items(self.items)
-    backward = _process_items(self.rev())
-    next(forward)
-    next(backward)
+    forward = next(_process_items(self.items))
+    backward = None if self.reversed is None else next(_process_items(self.rev()))
 
     return it(forward, backward, self.size_hint())
 
